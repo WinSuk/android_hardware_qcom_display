@@ -56,8 +56,10 @@ enum external_display_type {
 };
 enum HWCCompositionType {
     HWC_USE_GPU = HWC_FRAMEBUFFER, // This layer is to be handled by
-                                   //                 Surfaceflinger
+                                   // Surfaceflinger
     HWC_USE_OVERLAY = HWC_OVERLAY, // This layer is to be handled by the overlay
+    HWC_USE_BACKGROUND
+                = HWC_BACKGROUND,  // This layer is to be handled by TBD
     HWC_USE_COPYBIT                // This layer is to be handled by copybit
 };
 
@@ -121,6 +123,9 @@ static inline bool isExtCC(const private_handle_t* hnd) {
 // Initialize uevent thread
 void init_uevent_thread(hwc_context_t* ctx);
 
+// Initialize vsync thread
+void init_vsync_thread(hwc_context_t* ctx);
+
 inline void getLayerResolution(const hwc_layer_t* layer,
                                          int& width, int& height)
 {
@@ -129,6 +134,12 @@ inline void getLayerResolution(const hwc_layer_t* layer,
     height = displayFrame.bottom - displayFrame.top;
 }
 }; //qhwc namespace
+
+struct vsync_state {
+    pthread_mutex_t lock;
+    pthread_cond_t  cond;
+    bool enable;
+};
 
 // -----------------------------------------------------------------------------
 // HWC context
@@ -161,6 +172,16 @@ struct hwc_context_t {
 
     qhwc::MDPInfo mMDP;
 
+    //Vsync
+    struct vsync_state vstate;
+
+    // flag that indicate secure session status
+    bool mSecure;
+
+    // flag that indicate whether secure/desecure session in progress
+    bool mSecureConfig;
+    bool hdmi_pending;
+    char  mHDMIEvent[512];
 };
 
 #endif //HWC_UTILS_H

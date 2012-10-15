@@ -18,54 +18,27 @@
  * limitations under the License.
  */
 #define DEBUG 0
-#ifndef HWC_UEVENTS_H
-#define HWC_UEVENTS_H
 #include <hardware_legacy/uevent.h>
 #include <utils/Log.h>
 #include <sys/resource.h>
 #include <sys/prctl.h>
 #include <string.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include "hwc_utils.h"
 #include "hwc_external.h"
 
-namespace qhwc {
+#define PAGE_SIZE 4096
 
-const char* MSMFB_DEVICE_FB0 = "change@/devices/virtual/graphics/fb0";
-const char* MSMFB_DEVICE_FB1 = "change@/devices/virtual/graphics/fb1";
-const char* MSMFB_FB_NODE = "fb";
+namespace qhwc {
 
 static void handle_uevent(hwc_context_t* ctx, const char* udata, int len)
 {
     int vsync = 0;
     int64_t timestamp = 0;
     const char *str = udata;
-    hwc_procs* proc = (hwc_procs*)ctx->device.reserved_proc[0];
-    int hdmiconnected = ctx->mExtDisplay->getExternalDisplay();
 
     if(!strcasestr(str, "@/devices/virtual/graphics/fb")) {
         ALOGD_IF(DEBUG, "%s: Not Ext Disp Event ", __FUNCTION__);
-        return;
-    }
-
-    if(ctx->mExtDisplay->isHDMIConfigured() &&
-            (hdmiconnected == EXTERN_DISPLAY_FB1))
-        vsync = !strncmp(str, MSMFB_DEVICE_FB1, strlen(MSMFB_DEVICE_FB1));
-    else
-        vsync = !strncmp(str, MSMFB_DEVICE_FB0, strlen(MSMFB_DEVICE_FB0));
-
-    if(vsync) {
-        str += strlen(str) + 1;
-        while(*str) {
-            if (!strncmp(str, "VSYNC=", strlen("VSYNC="))) {
-                timestamp = strtoull(str + strlen("VSYNC="), NULL, 0);
-                proc->vsync(proc, 0, timestamp);
-            }
-            str += strlen(str) + 1;
-            if(str - udata >= len)
-                break;
-        }
         return;
     }
 
@@ -77,8 +50,17 @@ static void handle_uevent(hwc_context_t* ctx, const char* udata, int len)
     // for now just parsing onlin/offline info is enough
     str = udata;
     if(!(strncmp(str,"online@",strlen("online@")))) {
-        ctx->mExtDisplay->processUEventOnline(str);
+        strncpy(ctx->mHDMIEvent,str,strlen(str));
+        ctx->hdmi_pending = true;
+        //Invalidate
+        hwc_procs* proc = (hwc_procs*)ctx->device.reserved_proc[0];
+        if(!proc) {
+            ALOGE("%s: HWC proc not registered", __FUNCTION__);
+        } else {
+            proc->invalidate(proc);
+        }
     } else if(!(strncmp(str,"offline@",strlen("offline@")))) {
+        ctx->hdmi_pending = false;
         ctx->mExtDisplay->processUEventOffline(str);
     }
 }
@@ -86,8 +68,7 @@ static void handle_uevent(hwc_context_t* ctx, const char* udata, int len)
 static void *uevent_loop(void *param)
 {
     int len = 0;
-    static char udata[4096];
-    memset(udata, 0, sizeof(udata));
+    static char udata[PAGE_SIZE];
     hwc_context_t * ctx = reinterpret_cast<hwc_context_t *>(param);
 
     char thread_name[64] = "hwcUeventThread";
@@ -103,49 +84,11 @@ static void *uevent_loop(void *param)
     return NULL;
 }
 
-static void *vsync_loop(void *param)
-{
-    static char buf[4096];
-    int fb0_vsync_fd;
-    fd_set exceptfds;
-    int res;
-    int64_t timestamp = 0;
-    hwc_context_t * ctx = reinterpret_cast<hwc_context_t *>(param);
-    hwc_procs* proc = (hwc_procs*)ctx->device.reserved_proc[0];
-
-    fb0_vsync_fd = open("/sys/devices/virtual/graphics/fb0/vsync_time", O_RDONLY);
-    if (!fb0_vsync_fd)
-        return NULL;
-
-    char thread_name[64] = "hwcVsyncThread";
-    prctl(PR_SET_NAME, (unsigned long) &thread_name, 0, 0, 0);
-    setpriority(PRIO_PROCESS, 0, -20);
-    memset(buf, 0, sizeof(buf));
-
-    ALOGI("Using sysfs mechanism for VSYNC notification");
-
-    FD_ZERO(&exceptfds);
-    FD_SET(fb0_vsync_fd, &exceptfds);
-
-    do {
-        ssize_t len = read(fb0_vsync_fd, buf, sizeof(buf));
-        timestamp = strtoull(buf, NULL, 0);
-        proc->vsync(proc, 0, timestamp);
-        select(fb0_vsync_fd + 1, NULL, NULL, &exceptfds, NULL);
-        lseek(fb0_vsync_fd, 0, SEEK_SET);
-    } while (1);
-
-    return NULL;
-}
-
 void init_uevent_thread(hwc_context_t* ctx)
 {
     pthread_t uevent_thread;
-    pthread_t vsync_thread;
     ALOGI("Initializing UEvent Listener Thread");
     pthread_create(&uevent_thread, NULL, uevent_loop, (void*) ctx);
-    pthread_create(&vsync_thread, NULL, vsync_loop, (void*) ctx);
 }
 
 }; //namespace
-#endif //HWC_UEVENTS_H

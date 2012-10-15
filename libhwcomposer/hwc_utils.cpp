@@ -66,6 +66,12 @@ void initContext(hwc_context_t *ctx)
     property_get("debug.hwc.dynThreshold", value, "2");
     ctx->dynThreshold = atof(value);
 
+    pthread_mutex_init(&(ctx->vstate.lock), NULL);
+    pthread_cond_init(&(ctx->vstate.cond), NULL);
+    ctx->vstate.enable = false;
+
+    ctx->hdmi_pending = false;
+
     ALOGI("Initializing Qualcomm Hardware Composer");
     ALOGI("MDP version: %d", ctx->mMDP.version);
     ALOGI("DYN composition threshold : %f", ctx->dynThreshold);
@@ -98,6 +104,8 @@ void closeContext(hwc_context_t *ctx)
         ctx->mExtDisplay = NULL;
     }
 
+    pthread_mutex_destroy(&(ctx->vstate.lock));
+    pthread_cond_destroy(&(ctx->vstate.cond));
 
     free(const_cast<hwc_methods_t *>(ctx->device.methods));
 
@@ -148,7 +156,6 @@ void getLayerStats(hwc_context_t *ctx, const hwc_layer_list_t *list)
                 //second video
                 pipLayerIndex = i;
             }
-            yuvLayerIndex = i;
             yuvSecure = isSecureBuffer(hnd);
             //Animating
             //Do not mark as SKIP if it is secure buffer
